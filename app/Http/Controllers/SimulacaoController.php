@@ -2,33 +2,26 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\SimulacaoService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Validator;
 
-class SimulacaoController extends Controller
+class SimulacaoController
 {
-    private function lerArquivoJson(string $nomeArquivo): array
+    public function getInstituicoes(SimulacaoService $service)
     {
-        $caminhoArquivo = 'data/' . $nomeArquivo;
-        if (!Storage::exists($caminhoArquivo)) {
-            return [];
-        }
-        $conteudo = Storage::get($caminhoArquivo);
-        return json_decode($conteudo, true) ?? [];
+        $resultado = $service->lerArquivoJson('instituicoes.json');
+        return response()->json($resultado);
     }
 
-    public function getInstituicoes()
+    public function getConvenios(SimulacaoService $service)
     {
-        $instituicoes = $this->lerArquivoJson('instituicoes.json');
-        return response()->json($instituicoes);
+        $resultado = $service->lerArquivoJson('convenios.json');
+        return response()->json($resultado);
     }
 
-    public function getConvenios()
-    {
-        $convenios = $this->lerArquivoJson('convenios.json');
-        return response()->json($convenios);
-    }
-
-    public function simularCredito(Request $request)
+    public function simularCredito(Request $request, SimulacaoService $service)
     {
         $validator = Validator::make($request->all(), [
             'valor_emprestimo' => 'required|numeric|gt:0',
@@ -38,40 +31,15 @@ class SimulacaoController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 400);
+            return response()->json([
+                'message' => 'Erro de validação',
+                'errors' => $validator->errors()
+            ], 422);
         }
 
-        $dadosSimulacao = $request->only(['valor_emprestimo', 'instituicoes', 'convenios', 'parcela']);
+        $dados = $request->only(['valor_emprestimo', 'instituicoes', 'convenios', 'parcela']);
+        $resultado = $service->simular($dados);
 
-        $taxas = $this->lerArquivoJson('taxas_instituicoes.json');
-        $resultados = [];
-
-        foreach ($dadosSimulacao['instituicoes'] as $instituicao) {
-            $resultados[$instituicao] = [];
-
-            $taxasFiltradas = Arr::where($taxas, function ($taxa) use ($instituicao, $dadosSimulacao) {
-                $matchInstituicao = $taxa['instituicao'] === $instituicao;
-                $matchConvenio = empty($dadosSimulacao['convenios']) || in_array($taxa['convenio'], $dadosSimulacao['convenios']);
-                $matchParcela = empty($dadosSimulacao['parcela']) || $taxa['parcelas'] == $dadosSimulacao['parcela'];
-
-                return $matchInstituicao && $matchConvenio && $matchParcela;
-            });
-
-            foreach ($taxasFiltradas as $taxa) {
-                $valorParcela = $dadosSimulacao['valor_emprestimo'] * $taxa['coeficiente'];
-                $resultados[$instituicao][] = [
-                    'taxa' => $taxa['taxaJuros'],
-                    'parcelas' => $taxa['parcelas'],
-                    'valor_parcela' => round($valorParcela, 2),
-                    'convenio' => $taxa['convenio']
-                ];
-            }
-
-            if (empty($resultados[$instituicao])) {
-                unset($resultados[$instituicao]);
-            }
-        }
-
-        return response()->json($resultados);
+        return response()->json($resultado);
     }
 }
